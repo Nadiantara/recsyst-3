@@ -1,0 +1,52 @@
+🍎 Enhanced BERT4Rec - M1 Mac Training
+============================================================
+🚀 Enhanced BERT4Rec Training - M1 Optimized
+============================================================
+🔍 Checking environment...
+PyTorch version: 2.7.0
+✅ Apple Silicon MPS is available
+✅ MPS fallback enabled for compatibility
+📊 Configuration:
+   Device: mps
+   Batch size: 32
+   Max epochs: 30
+   Learning rate: 0.0001
+   Hidden size: 256
+
+📚 Loading MovieLens data...
+Loading MovieLens 1M dataset...
+Loaded 3883 movies
+Loaded 6040 users
+Loaded 1000209 ratings
+Dataset loaded:
+- Users: 6040
+- Items: 3883
+- Genres: 19
+- Occupations: 21
+- Total interactions: 1000209
+Creating sequences...
+Created 994169 training sequences
+Train sequences: 795335
+Validation sequences: 198834
+✅ Data loaded in 45.78s
+   Training batches: 24855
+   Validation batches: 6214
+   Vocabulary size: 3883
+   Users: 6040
+   Genres: 19
+
+🤖 Initializing Enhanced BERT4Rec model...
+✅ Model initialized successfully!
+   Total parameters: 5,917,378
+   Trainable parameters: 5,917,378
+   Model size: ~22.6 MB
+
+🏋️ Starting training...
+✅ Trainer initialized!
+   Optimizer: AdamW
+   Scheduler: CosineAnnealingLR
+   Multi-task learning enabled
+Starting training for 30 epochs...
+Device: mps
+Model parameters: 5,917,378
+Training Epoch 1:   0%|          | 0/24855 [00:00<?, ?it/s]
