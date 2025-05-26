@@ -274,56 +274,71 @@ class EnhancedBERT4RecTrainer:
         return epoch_losses
     
     def compute_metrics(self, k_values: List[int] = [1, 5, 10, 20]) -> Dict[str, float]:
-        """Compute recommendation metrics"""
+        """Compute Hit@K and NDCG@K for given K values"""
         self.model.eval()
         
-        all_hits = {k: [] for k in k_values}
-        all_ndcg = {k: [] for k in k_values}
+        all_preds = []
+        all_labels = []
         
         with torch.no_grad():
-            for batch in tqdm(self.val_loader, desc='Computing metrics'):
-                batch = {k: v.to(self.device) for k, v in batch.items()}
+            for batch in tqdm(self.val_loader, desc="Evaluating", leave=False):
+                inputs, labels, target_items, target_ratings, user_ids = batch
                 
-                # Get predictions
-                predictions = self.model.predict_next_items(
-                    input_ids=batch['input_ids'],
-                    movie_genres=batch['seq_genres'],
-                    movie_years=batch['seq_years'],
-                    user_ids=batch['user_id'],
-                    user_genders=batch['user_gender'],
-                    user_ages=batch['user_age'],
-                    user_occupations=batch['user_occupation'],
-                    timestamps=batch['input_timestamps'],
-                    k=max(k_values)
-                )
+                # Move to device
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                labels = labels.to(self.device)
+                target_items = target_items.to(self.device) # Next item prediction
                 
-                # Compute metrics for each sample
-                targets = batch['target_item'].cpu().numpy()
-                preds = predictions.cpu().numpy()
+                # Forward pass for next item prediction
+                outputs = self.model(inputs)
+                preds = outputs['next_item'] # Logits for next item prediction
                 
-                for i in range(len(targets)):
-                    target = targets[i]
-                    pred = preds[i]
-                    
-                    for k in k_values:
-                        # Hit@K
-                        hit = 1 if target in pred[:k] else 0
-                        all_hits[k].append(hit)
-                        
-                        # NDCG@K
-                        if target in pred[:k]:
-                            rank = np.where(pred[:k] == target)[0][0] + 1
-                            ndcg = 1.0 / np.log2(rank + 1)
-                        else:
-                            ndcg = 0.0
-                        all_ndcg[k].append(ndcg)
+                # Get top K predictions
+                # The target_items are the actual next items in the sequence
+                # We need to compare our model's predictions against these
+                
+                # Iterate over each sample in the batch
+                for i in range(preds.size(0)):
+                    # Get the actual next item (label)
+                    actual_next_item = target_items[i].item()
+                    # We are interested if this actual_next_item is in our top-k predictions
+                    # Get top-k predictions for this sample
+                    _, top_k_preds = torch.topk(preds[i], max(k_values))
+                    all_preds.append(top_k_preds.cpu().numpy())
+                    all_labels.append(actual_next_item)
         
-        # Compute average metrics
         metrics = {}
         for k in k_values:
-            metrics[f'Hit@{k}'] = np.mean(all_hits[k])
-            metrics[f'NDCG@{k}'] = np.mean(all_ndcg[k])
-        
+            hits = []
+            ndcgs = []
+            recalls = [] # Add recalls list
+            for i in range(len(all_labels)):
+                pred_k = all_preds[i][:k]
+                label = all_labels[i]
+                
+                # Hit@K
+                hit = 1 if label in pred_k else 0
+                hits.append(hit)
+                
+                # NDCG@K
+                if hit:
+                    # Find rank of the label
+                    rank = np.where(pred_k == label)[0][0]
+                    ndcgs.append(1 / np.log2(rank + 2))
+                else:
+                    ndcgs.append(0)
+
+                # Recall@K
+                # In this context, for a single next item prediction, recall is the same as hit rate.
+                # If we were predicting a SET of items, recall would be |relevant_items_recommended intersect relevant_items| / |relevant_items|
+                # For next item prediction, there's only one relevant item.
+                # So, if the relevant item is in top K, recall is 1, else 0.
+                recalls.append(hit) # Recall is the same as hit for next item prediction
+
+            metrics[f'Hit@{k}'] = np.mean(hits)
+            metrics[f'NDCG@{k}'] = np.mean(ndcgs)
+            metrics[f'Recall@{k}'] = np.mean(recalls) # Add Recall@K to metrics
+            
         return metrics
     
     def save_checkpoint(self, filename: str = None):
@@ -412,6 +427,7 @@ class EnhancedBERT4RecTrainer:
             if metrics:
                 print(f"  Hit@10: {metrics.get('Hit@10', 0):.4f}")
                 print(f"  NDCG@10: {metrics.get('NDCG@10', 0):.4f}")
+                print(f"  Recall@10: {metrics.get('Recall@10', 0):.4f}")
             print(f"  Time: {epoch_time:.2f}s")
             
             # Log to wandb
@@ -450,13 +466,13 @@ def main():
         'learning_rate': 1e-4,
         'max_epochs': 100,
         'patience': 15, # Early stopping patience
-        'hidden_size': 256,
-        'num_heads': 4,
-        'num_layers': 4,
+        'hidden_size': 48,
+        'num_heads': 2,
+        'num_layers': 2,
         'dropout': 0.2,
-        'genre_embed_size': 32,
-        'user_embed_size': 64,
-        'temporal_embed_size': 32,
+        'genre_embed_size': 16,
+        'user_embed_size': 24,
+        'temporal_embed_size': 16,
         'task_weights': {
             'item_prediction': 1.0,
             'next_item': 1.0, 
