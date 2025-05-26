@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Data files & Archives
+*.zip
+*.tar.gz
+*.gz
+*.rar
+ml-1m/
+
+# Checkpoints and Logs
+*.pt
+*.pth
+*.log
+checkpoints/
+demo_checkpoints/
+logs/
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.swp
+*~ 
