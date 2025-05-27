@@ -274,70 +274,68 @@ class EnhancedBERT4RecTrainer:
         return epoch_losses
     
     def compute_metrics(self, k_values: List[int] = [1, 5, 10, 20]) -> Dict[str, float]:
-        """Compute Hit@K and NDCG@K for given K values"""
+        """Compute Hit@K, NDCG@K, and Recall@K for given K values"""
         self.model.eval()
         
-        all_preds = []
-        all_labels = []
+        all_model_predictions = [] 
+        all_ground_truth_items = [] 
         
         with torch.no_grad():
-            for batch in tqdm(self.val_loader, desc="Evaluating", leave=False):
-                inputs, labels, target_items, target_ratings, user_ids = batch
+            for batch_data_dict in tqdm(self.val_loader, desc="Evaluating", leave=False):
+                current_batch_on_device = {
+                    k: v.to(self.device) for k, v in batch_data_dict.items() if isinstance(v, torch.Tensor)
+                }
+
+                model_outputs = self.model(
+                    input_ids=current_batch_on_device['input_ids'],
+                    movie_genres=current_batch_on_device['seq_genres'],
+                    movie_years=current_batch_on_device['seq_years'],
+                    user_ids=current_batch_on_device['user_id'],
+                    user_genders=current_batch_on_device['user_gender'],
+                    user_ages=current_batch_on_device['user_age'],
+                    user_occupations=current_batch_on_device['user_occupation'],
+                    timestamps=current_batch_on_device['input_timestamps'],
+                    return_all_heads=False 
+                )
                 
-                # Move to device
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
-                labels = labels.to(self.device)
-                target_items = target_items.to(self.device) # Next item prediction
+                preds_logits = model_outputs['item_logits'][:, -1, :]
+                ground_truth_next_items = current_batch_on_device['target_item']
                 
-                # Forward pass for next item prediction
-                outputs = self.model(inputs)
-                preds = outputs['next_item'] # Logits for next item prediction
-                
-                # Get top K predictions
-                # The target_items are the actual next items in the sequence
-                # We need to compare our model's predictions against these
-                
-                # Iterate over each sample in the batch
-                for i in range(preds.size(0)):
-                    # Get the actual next item (label)
-                    actual_next_item = target_items[i].item()
-                    # We are interested if this actual_next_item is in our top-k predictions
-                    # Get top-k predictions for this sample
-                    _, top_k_preds = torch.topk(preds[i], max(k_values))
-                    all_preds.append(top_k_preds.cpu().numpy())
-                    all_labels.append(actual_next_item)
+                for i in range(preds_logits.size(0)):
+                    _, top_k_predicted_indices = torch.topk(preds_logits[i], max(k_values))
+                    all_model_predictions.append(top_k_predicted_indices.cpu().numpy())
+                    
+                    actual_next_item_id = ground_truth_next_items[i].item()
+                    all_ground_truth_items.append(actual_next_item_id)
         
         metrics = {}
-        for k in k_values:
-            hits = []
-            ndcgs = []
-            recalls = [] # Add recalls list
-            for i in range(len(all_labels)):
-                pred_k = all_preds[i][:k]
-                label = all_labels[i]
+        for k_val in k_values:
+            hits_at_k = []
+            ndcgs_at_k = []
+            recalls_at_k = [] 
+            
+            for i in range(len(all_ground_truth_items)):
+                top_k_preds_for_sample = all_model_predictions[i][:k_val] 
+                label_for_sample = all_ground_truth_items[i]
                 
-                # Hit@K
-                hit = 1 if label in pred_k else 0
-                hits.append(hit)
+                hit = 1 if label_for_sample in top_k_preds_for_sample else 0
+                hits_at_k.append(hit)
                 
-                # NDCG@K
                 if hit:
-                    # Find rank of the label
-                    rank = np.where(pred_k == label)[0][0]
-                    ndcgs.append(1 / np.log2(rank + 2))
+                    rank_list = np.where(top_k_preds_for_sample == label_for_sample)[0]
+                    if len(rank_list) > 0: # Check if label_for_sample was found
+                        rank = rank_list[0] # rank is 0-indexed
+                        ndcgs_at_k.append(1 / np.log2(rank + 2)) 
+                    else: # Should ideally not happen if hit is 1, but as a safeguard
+                        ndcgs_at_k.append(0)
                 else:
-                    ndcgs.append(0)
+                    ndcgs_at_k.append(0)
 
-                # Recall@K
-                # In this context, for a single next item prediction, recall is the same as hit rate.
-                # If we were predicting a SET of items, recall would be |relevant_items_recommended intersect relevant_items| / |relevant_items|
-                # For next item prediction, there's only one relevant item.
-                # So, if the relevant item is in top K, recall is 1, else 0.
-                recalls.append(hit) # Recall is the same as hit for next item prediction
+                recalls_at_k.append(hit)
 
-            metrics[f'Hit@{k}'] = np.mean(hits)
-            metrics[f'NDCG@{k}'] = np.mean(ndcgs)
-            metrics[f'Recall@{k}'] = np.mean(recalls) # Add Recall@K to metrics
+            metrics[f'Hit@{k_val}'] = np.mean(hits_at_k)
+            metrics[f'NDCG@{k_val}'] = np.mean(ndcgs_at_k)
+            metrics[f'Recall@{k_val}'] = np.mean(recalls_at_k)
             
         return metrics
     
@@ -463,7 +461,7 @@ def main():
         'data_dir': 'ml-1m',
         'batch_size': 64,
         'max_seq_len': 50,
-        'learning_rate': 1e-4,
+        'learning_rate': 1e-3,
         'max_epochs': 100,
         'patience': 15, # Early stopping patience
         'hidden_size': 48,
@@ -471,8 +469,8 @@ def main():
         'num_layers': 2,
         'dropout': 0.2,
         'genre_embed_size': 16,
-        'user_embed_size': 24,
-        'temporal_embed_size': 16,
+        'user_embed_size': 128,
+        'temporal_embed_size': 256,
         'task_weights': {
             'item_prediction': 1.0,
             'next_item': 1.0, 
